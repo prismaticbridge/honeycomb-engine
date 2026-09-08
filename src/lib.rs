@@ -29,6 +29,7 @@ pub struct GpuContext {
 }
 
 pub struct Renderer {
+    ///Window isn't used in renderer, the application should hold a separate Arc clone
     pub window: Arc<Window>,
     pub is_surface_configured: Mutex<bool>, // so render doesn't require mutable reference and can be run asynchronously
     gpu: Arc<GpuContext>,
@@ -442,8 +443,6 @@ impl Renderer {
         self.gpu.queue.submit(std::iter::once(encoder.finish()));
         self.gpu.queue.present(output);
 
-        self.window.request_redraw();
-
         Ok(())
     }
 
@@ -454,12 +453,15 @@ impl Renderer {
         if let Ok(mut surface_configured) = self.is_surface_configured.lock() {
             *surface_configured = true;
         };
-
-        // self.update_window_size_camera_transform(width, height);
     }
 
     pub fn move_camera(&mut self, offset: Vec2) {
         self.camera_transform.move_relative(-offset);
+    }
+
+    /// Sets the camera to an absolute world position
+    pub fn move_camera_absolute(&mut self, position: Vec2) {
+        self.camera_transform.move_absolute(-position);
     }
 
     pub fn set_transform(&mut self, scale: Vec2, angle: f32) {
