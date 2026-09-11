@@ -1,4 +1,4 @@
-use crate::GPUTransform;
+use crate::{GPUTransform, vertex::{InterpolatedPose, Transform}};
 use glam::Vec2;
 use image;
 use std::sync::Arc;
@@ -10,7 +10,10 @@ pub struct Mesh {
     pub index_offset: u32,
     pub num_indices: u32,
     pub transformations: Vec<GPUTransform>, //each instance gets one transformation
-    pub instance_buffer: GpuBuffer,
+    pub interpolated_poses: Vec<InterpolatedPose>,
+    pub interpolated_transforms: Vec<GPUTransform>, //basically a temporary buffer
+    pub direct_transform_buffer: GpuBuffer,
+    pub interpolated_transform_buffer: GpuBuffer,
 }
 
 pub struct ColoredObject {
@@ -105,7 +108,13 @@ impl Material {
             index_offset: self.vertex_buffer.bytes_used as u32 / size_of::<u16>() as u32,
             num_indices: indices.len() as u32,
             transformations: Vec::new(),
-            instance_buffer: GpuBuffer::new(self.gpu.clone(), wgpu::BufferUsages::VERTEX),
+            interpolated_poses: Vec::new(),
+            interpolated_transforms: Vec::new(),
+            direct_transform_buffer: GpuBuffer::new(self.gpu.clone(), wgpu::BufferUsages::VERTEX),
+            interpolated_transform_buffer: GpuBuffer::new(
+                self.gpu.clone(),
+                wgpu::BufferUsages::VERTEX,
+            ),
         };
         self.vertex_buffer.append(bytemuck::cast_slice(mesh));
         self.index_buffer.append(indices);
@@ -117,17 +126,49 @@ impl Material {
         let mesh = &mut self.meshes[mesh];
         let size = mesh.transformations.len();
         mesh.transformations.push(GPUTransform::from(transform));
-        mesh.instance_buffer
+        mesh.direct_transform_buffer
             .append(bytemuck::cast_slice(&mesh.transformations[size..size + 1]));
+    }
+
+    pub fn add_interpolated_instance(&mut self, transform: &Transform, mesh: usize) {
+        let mesh = &mut self.meshes[mesh];
+        let interpolated_pose = InterpolatedPose::new(transform.clone());
+        mesh.interpolated_poses.push(interpolated_pose);
     }
 
     pub fn move_object_absolute(&mut self, mesh: usize, object: usize, position: Vec2) {
         let mesh = &mut self.meshes[mesh];
         mesh.transformations[object].move_absolute(position);
-        mesh.instance_buffer.update_aligned(
+        mesh.direct_transform_buffer.update_aligned(
             (object * size_of::<GPUTransform>()) as u32,
             bytemuck::cast_slice(&[mesh.transformations[object]]),
         );
+    }
+
+    pub fn update_interpolated_target(&mut self, mesh: usize, object: usize, new_target: &Transform, timestamp: u64, duration: u64) {
+        let instance = &mut self.meshes[mesh].interpolated_poses[object];
+        instance.update_target(new_target, timestamp, duration);
+    }
+
+    pub fn move_interpolated_object_absolute(
+        &mut self,
+        mesh: usize,
+        object: usize,
+        position: Vec2,
+        current_time: u64,
+        duration: u64,
+    ) {
+        let mesh = &mut self.meshes[mesh];
+        mesh.interpolated_poses[object].move_target_absolute(position, current_time, duration);
+    }
+
+    pub fn update_interpolations(&mut self, frame_timestamp: u64) {
+        for mesh in &mut self.meshes {
+            for i in 0..mesh.interpolated_poses.len() {
+                let transform = mesh.interpolated_poses[i].interpolate(frame_timestamp);
+                mesh.interpolated_transforms[i] = transform;
+            }
+        }
     }
 
     pub fn render(&self, render_pass: &mut wgpu::RenderPass) {
@@ -138,11 +179,17 @@ impl Material {
             wgpu::IndexFormat::Uint16,
         );
         for mesh in &self.meshes {
-            render_pass.set_vertex_buffer(1, mesh.instance_buffer.buffer.slice(..));
+            render_pass.set_vertex_buffer(1, mesh.direct_transform_buffer.buffer.slice(..));
             render_pass.draw_indexed(
                 mesh.index_offset..(mesh.index_offset + mesh.num_indices),
                 mesh.vertex_offset as i32,
                 0..mesh.transformations.len() as u32,
+            );
+            render_pass.set_vertex_buffer(1, mesh.interpolated_transform_buffer.buffer.slice(..));
+            render_pass.draw_indexed(
+                mesh.index_offset..(mesh.index_offset + mesh.num_indices),
+                mesh.vertex_offset as i32,
+                0..mesh.interpolated_transforms.len() as u32,
             );
         }
     }
