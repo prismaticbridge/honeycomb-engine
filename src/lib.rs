@@ -2,7 +2,7 @@ use crate::{
     material::ColoredObject,
     scene::Scene,
     utils::{SurfaceError, try_create_surface},
-    vertex::{GPUTransform, TextureVertex, Transform, Vertex},
+    vertex::{GPUTransform, InterpolatedPose, TextureVertex, Transform, Vertex},
 };
 use glam::{Affine2, Mat2, Vec2};
 use std::{num::NonZeroU64, sync::Arc, time::Instant};
@@ -43,6 +43,7 @@ pub struct Renderer {
 
     texture_bind_group_layout: wgpu::BindGroupLayout,
 
+    camera: InterpolatedPose,
     camera_transform: GPUTransform,
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
@@ -207,6 +208,8 @@ impl Renderer {
                 ],
             });
 
+        let camera_pose_transform = Transform::new();
+        let camera = InterpolatedPose::new(camera_pose_transform);
         let camera_transform = GPUTransform::from(&glam::Affine2::IDENTITY);
 
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -296,6 +299,7 @@ impl Renderer {
             basic_render_pipeline,
             texture_bind_group_layout,
             texture_render_pipeline,
+            camera,
             camera_transform,
             uniform_buffer,
             uniform_bind_group,
@@ -357,14 +361,19 @@ impl Renderer {
         material_ref.meshes[mesh].transformations.len() - 1
     }
 
-    pub fn add_interpolated_object(&mut self, scene: usize, material: usize, mesh: usize, transform: &Transform) {
+    pub fn add_interpolated_object(&mut self, scene: usize, material: usize, mesh: usize, transform: &Transform) -> usize {
         let material = &mut self.scenes[scene].materials[material];
         material.add_interpolated_instance(transform, mesh);
+        material.meshes[mesh].interpolated_poses.len() - 1
     }
 
-    pub fn set_interpolated_target_position(&mut self, scene: usize, material: usize, mesh: usize, object: usize, new_target: Vec2, duration: u64) {
-        let material = &mut self.scenes[scene].materials[material];
-        material.move_interpolated_object_absolute(mesh, object, new_target, self.frame_timestamp_us, duration);
+    pub fn set_interpolated_target_position(&mut self, material: usize, mesh: usize, object: usize, new_target: Vec2, duration: u64) {
+        let scene = match self.active_scene {
+            None => return,
+            Some(scene) => scene,
+        };
+        let mesh = &mut self.scenes[scene].materials[material].meshes[mesh];
+        mesh.interpolated_poses[object].move_target_absolute(new_target, self.frame_timestamp_us, duration);
     }
 
     /// call this right before calling render()
@@ -378,6 +387,9 @@ impl Renderer {
         for material in &mut self.scenes[scene].materials {
             material.update_interpolations(self.frame_timestamp_us);
         }
+
+        self.camera_transform = self.camera.interpolate(self.frame_timestamp_us);
+        self.gpu.queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[self.camera_transform]));
     }
 
     pub fn render(&self) -> Result<(), utils::SurfaceError> {
@@ -474,24 +486,20 @@ impl Renderer {
         self.camera_transform.move_relative(-offset);
     }
 
+
     /// Sets the camera to an absolute world position
-    pub fn move_camera_absolute(&mut self, position: Vec2) {
-        self.camera_transform.move_absolute(-position);
+    pub fn move_camera_absolute(&mut self, position: Vec2, move_time: u64) {
+        self.camera.move_target_absolute(-position, self.frame_timestamp_us, move_time);
     }
 
     pub fn set_transform(&mut self, scale: Vec2, angle: f32) {
-        self.camera_transform.reset_transform();
-        let transformation_matrix = Mat2::from_scale_angle(scale, angle);
-        self.camera_transform
-            .apply_transform(&transformation_matrix);
-    }
-
-    pub fn update_camera(&mut self) {
-        self.gpu.queue.write_buffer(
-            &self.uniform_buffer,
-            0,
-            bytemuck::cast_slice(&[self.camera_transform]),
-        );
+        let new_transform = Transform {
+            position: Vec2::from_array(self.camera_transform.translation),
+            rotation: angle,
+            scale,
+            shear: Vec2::ZERO,
+        };
+        self.camera.update_target(&new_transform, self.frame_timestamp_us, 0);
     }
 
     pub fn camera_position(&self) -> Vec2 {

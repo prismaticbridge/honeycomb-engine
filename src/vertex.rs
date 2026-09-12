@@ -98,6 +98,7 @@ impl InterpolatedPose {
     }
 
     pub fn move_target_absolute(&mut self, new_position: Vec2, current_time: u64, duration: u64) {
+        self.current = self.target.clone();
         self.target.position = new_position;
         self.start_time = current_time;
         self.duration = duration;

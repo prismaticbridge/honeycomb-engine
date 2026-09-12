@@ -1,5 +1,5 @@
 use crate::{GPUTransform, vertex::{InterpolatedPose, Transform}};
-use glam::Vec2;
+use glam::{Affine2, Vec2};
 use image;
 use std::sync::Arc;
 
@@ -134,6 +134,9 @@ impl Material {
         let mesh = &mut self.meshes[mesh];
         let interpolated_pose = InterpolatedPose::new(transform.clone());
         mesh.interpolated_poses.push(interpolated_pose);
+        mesh.interpolated_transforms.push(GPUTransform::from(&Affine2::IDENTITY));
+        let len = mesh.interpolated_transforms.len();
+        mesh.interpolated_transform_buffer.append(bytemuck::cast_slice(&mesh.interpolated_transforms[len-1..len]));
     }
 
     pub fn move_object_absolute(&mut self, mesh: usize, object: usize, position: Vec2) {
@@ -145,21 +148,12 @@ impl Material {
         );
     }
 
+    //Note there is no move function for interpolated objects
+    //It would literally do nothing but wrap the function in InterpolatedPose
+
     pub fn update_interpolated_target(&mut self, mesh: usize, object: usize, new_target: &Transform, timestamp: u64, duration: u64) {
         let instance = &mut self.meshes[mesh].interpolated_poses[object];
         instance.update_target(new_target, timestamp, duration);
-    }
-
-    pub fn move_interpolated_object_absolute(
-        &mut self,
-        mesh: usize,
-        object: usize,
-        position: Vec2,
-        current_time: u64,
-        duration: u64,
-    ) {
-        let mesh = &mut self.meshes[mesh];
-        mesh.interpolated_poses[object].move_target_absolute(position, current_time, duration);
     }
 
     pub fn update_interpolations(&mut self, frame_timestamp: u64) {
@@ -168,6 +162,7 @@ impl Material {
                 let transform = mesh.interpolated_poses[i].interpolate(frame_timestamp);
                 mesh.interpolated_transforms[i] = transform;
             }
+            mesh.interpolated_transform_buffer.update_aligned(0, bytemuck::cast_slice(&mesh.interpolated_transforms));
         }
     }
 
