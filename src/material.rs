@@ -24,8 +24,9 @@ pub struct ColoredObject {
 pub struct Material {
     gpu: Arc<GpuContext>,
     pub bind_group: wgpu::BindGroup,
-    pub texture: wgpu::Texture,
-    pub view: wgpu::TextureView,
+    //not needed now, but maybe later to support loading/unloading materials
+    pub _texture: wgpu::Texture,
+    pub _view: wgpu::TextureView,
 
     pub meshes: Vec<Mesh>,
     vertex_buffer: GpuBuffer,
@@ -93,8 +94,8 @@ impl Material {
         Ok(Self {
             gpu: gpu.clone(),
             bind_group: diffuse_bind_group,
-            texture: diffuse_texture,
-            view: diffuse_texture_view,
+            _texture: diffuse_texture,
+            _view: diffuse_texture_view,
 
             meshes: Vec::new(),
             vertex_buffer: GpuBuffer::new(gpu.clone(), wgpu::BufferUsages::VERTEX),
@@ -150,11 +151,6 @@ impl Material {
 
     //Note there is no move function for interpolated objects
     //It would literally do nothing but wrap the function in InterpolatedPose
-
-    pub fn update_interpolated_target(&mut self, mesh: usize, object: usize, new_target: &Transform, timestamp: u64, duration: u64) {
-        let instance = &mut self.meshes[mesh].interpolated_poses[object];
-        instance.update_target(new_target, timestamp, duration);
-    }
 
     pub fn update_interpolations(&mut self, frame_timestamp: u64) {
         for mesh in &mut self.meshes {

@@ -24,8 +24,8 @@ fn vs_main(model: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     let transformed_pos = model.transform_col0 * model.position.x + model.transform_col1 * model.position.y;
     let world_pos = transformed_pos + model.translation;
-    let clip_position_world = camera.col0 * world_pos.x + camera.col1 * world_pos.y;
-    let clip_position = clip_position_world + camera.translation;
+    let view_pos = world_pos + camera.translation;
+    let clip_position = camera.col0 * view_pos.x + camera.col1 * view_pos.y;
     out.clip_position = vec4<f32>(clip_position, 0.0, 1.0);
     out.uv = model.uv_coords;
     return out;

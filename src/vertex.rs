@@ -86,12 +86,8 @@ impl InterpolatedPose {
             duration: 0,
         }
     }
-    pub fn update_target(
-        &mut self,
-        transform: &Transform,
-        current_time: u64,
-        duration: u64,
-    ) {
+    pub fn update_target(&mut self, transform: &Transform, current_time: u64, duration: u64) {
+        self.current = self.target.clone();
         self.target = transform.clone();
         self.start_time = current_time;
         self.duration = duration;
@@ -122,8 +118,16 @@ impl InterpolatedPose {
             }
         };
         let linear_transform: Mat2 = Mat2::from_scale_angle(transform.scale, transform.rotation);
-        let shear_matrix =
-            Mat2::from_cols(Vec2 { x: 1.0, y: transform.shear.y }, Vec2 { x: transform.shear.x, y: 1.0 });
+        let shear_matrix = Mat2::from_cols(
+            Vec2 {
+                x: 1.0,
+                y: transform.shear.y,
+            },
+            Vec2 {
+                x: transform.shear.x,
+                y: 1.0,
+            },
+        );
         let affine_transform = Affine2 {
             matrix2: linear_transform * shear_matrix,
             translation: transform.position,
@@ -203,6 +207,11 @@ pub struct Transform {
 
 impl Transform {
     pub fn new() -> Self {
-        Self { position: Vec2::ZERO, rotation: 0.0, shear: Vec2::ZERO, scale: Vec2::ONE }
+        Self {
+            position: Vec2::ZERO,
+            rotation: 0.0,
+            shear: Vec2::ZERO,
+            scale: Vec2::ONE,
+        }
     }
 }

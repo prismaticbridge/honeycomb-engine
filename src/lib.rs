@@ -4,7 +4,7 @@ use crate::{
     utils::{SurfaceError, try_create_surface},
     vertex::{GPUTransform, InterpolatedPose, TextureVertex, Transform, Vertex},
 };
-use glam::{Affine2, Mat2, Vec2};
+use glam::{Affine2, Vec2};
 use std::{num::NonZeroU64, sync::Arc, time::Instant};
 use std::{path::PathBuf, sync::Mutex};
 use wgpu::util::DeviceExt;
@@ -31,9 +31,11 @@ pub struct GpuContext {
 pub struct Renderer {
     ///Window isn't used in renderer, the application should hold a separate Arc clone
     pub window: Arc<Window>,
-    pub is_surface_configured: Mutex<bool>, // so render() doesn't require mutable reference and can be run asynchronously
     gpu: Arc<GpuContext>,
+
+    surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
+    is_surface_configured: Mutex<bool>, // so render() doesn't require mutable reference and can be run asynchronously
 
     pub window_width: u32,
     pub window_height: u32,
@@ -45,12 +47,12 @@ pub struct Renderer {
 
     camera: InterpolatedPose,
     camera_transform: GPUTransform,
+    //uniform buffers currently only used for camera
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
 
-    pub scenes: Vec<Scene>,
-    pub active_scene: Option<usize>,
-    surface: wgpu::Surface<'static>,
+    scenes: Vec<Scene>,
+    active_scene: Option<usize>,
 
     asset_root: PathBuf,
 
@@ -219,7 +221,7 @@ impl Renderer {
         });
 
         let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
+            label: Some("uniform bind group"),
             layout: &uniform_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -317,6 +319,10 @@ impl Renderer {
         self.scenes.len() - 1
     }
 
+    pub fn set_active_scene(&mut self, scene: usize) {
+        self.active_scene = Some(scene);
+    }
+
     pub fn add_static_object(
         &mut self,
         scene: usize,
@@ -361,27 +367,46 @@ impl Renderer {
         material_ref.meshes[mesh].transformations.len() - 1
     }
 
-    pub fn add_interpolated_object(&mut self, scene: usize, material: usize, mesh: usize, transform: &Transform) -> usize {
+    pub fn add_interpolated_object(
+        &mut self,
+        scene: usize,
+        material: usize,
+        mesh: usize,
+        transform: &Transform,
+    ) -> usize {
         let material = &mut self.scenes[scene].materials[material];
         material.add_interpolated_instance(transform, mesh);
         material.meshes[mesh].interpolated_poses.len() - 1
     }
 
-    pub fn set_interpolated_target_position(&mut self, material: usize, mesh: usize, object: usize, new_target: Vec2, duration: u64) {
+    pub fn set_interpolated_target_position(
+        &mut self,
+        material: usize,
+        mesh: usize,
+        object: usize,
+        new_target: Vec2,
+        duration: u64,
+    ) {
         let scene = match self.active_scene {
             None => return,
             Some(scene) => scene,
         };
         let mesh = &mut self.scenes[scene].materials[material].meshes[mesh];
-        mesh.interpolated_poses[object].move_target_absolute(new_target, self.frame_timestamp_us, duration);
+        mesh.interpolated_poses[object].move_target_absolute(
+            new_target,
+            self.frame_timestamp_us,
+            duration,
+        );
     }
 
-    /// call this right before calling render()
-    pub fn update_interpolations(&mut self) {
+    pub fn update_frame_timestamp(&mut self) {
         let elapsed_since_start = Instant::now() - self.timestamp_start;
         self.frame_timestamp_us = elapsed_since_start.as_micros() as u64;
+    }
+    /// call this right before calling render()
+    pub fn update_interpolations(&mut self) {
         let scene = match self.active_scene {
-            None => {return},
+            None => return,
             Some(scene) => scene,
         };
         for material in &mut self.scenes[scene].materials {
@@ -389,7 +414,11 @@ impl Renderer {
         }
 
         self.camera_transform = self.camera.interpolate(self.frame_timestamp_us);
-        self.gpu.queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[self.camera_transform]));
+        self.gpu.queue.write_buffer(
+            &self.uniform_buffer,
+            0,
+            bytemuck::cast_slice(&[self.camera_transform]),
+        );
     }
 
     pub fn render(&self) -> Result<(), utils::SurfaceError> {
@@ -429,7 +458,6 @@ impl Renderer {
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-
 
         let mut encoder = self
             .gpu
@@ -486,10 +514,10 @@ impl Renderer {
         self.camera_transform.move_relative(-offset);
     }
 
-
     /// Sets the camera to an absolute world position
     pub fn move_camera_absolute(&mut self, position: Vec2, move_time: u64) {
-        self.camera.move_target_absolute(-position, self.frame_timestamp_us, move_time);
+        self.camera
+            .move_target_absolute(-position, self.frame_timestamp_us, move_time);
     }
 
     pub fn set_transform(&mut self, scale: Vec2, angle: f32) {
@@ -499,7 +527,8 @@ impl Renderer {
             scale,
             shear: Vec2::ZERO,
         };
-        self.camera.update_target(&new_transform, self.frame_timestamp_us, 0);
+        self.camera
+            .update_target(&new_transform, self.frame_timestamp_us, 0);
     }
 
     pub fn camera_position(&self) -> Vec2 {
